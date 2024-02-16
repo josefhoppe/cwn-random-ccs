@@ -78,6 +78,7 @@ def main(args):
                                init_method=args.init_method, emb_dim=args.emb_dim,
                                flow_points=args.flow_points, flow_classes=args.flow_classes,
                                max_ring_size=args.max_ring_size,
+                               random_cell_count = args.random_cell_count,
                                use_edge_features=args.use_edge_features,
                                include_down_adj=args.include_down_adj,
                                simple_features=args.simple_features, n_jobs=args.preproc_jobs,

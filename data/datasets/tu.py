@@ -5,7 +5,7 @@ import numpy as np
 from definitions import ROOT_DIR
 
 from data.tu_utils import load_data, S2V_to_PyG, get_fold_indices
-from data.utils import convert_graph_dataset_with_gudhi, convert_graph_dataset_with_rings
+from data.utils import convert_graph_dataset_with_gudhi, convert_graph_dataset_with_rings, convert_graph_dataset_with_random_cells
 from data.datasets import InMemoryComplexDataset
 
 
@@ -38,11 +38,13 @@ class TUDataset(InMemoryComplexDataset):
     """A dataset of complexes obtained by lifting graphs from TUDatasets."""
 
     def __init__(self, root, name, max_dim=2, num_classes=2, degree_as_tag=False, fold=0,
-                 init_method='sum', seed=0, include_down_adj=False, max_ring_size=None):
+                 init_method='sum', seed=0, include_down_adj=False, max_ring_size=None,
+                 random_cell_count = None):
         self.name = name
         self.degree_as_tag = degree_as_tag
         assert max_ring_size is None or max_ring_size > 3
         self._max_ring_size = max_ring_size
+        self._random_cell_count = random_cell_count
         cellular = (max_ring_size is not None)
         if cellular:
             assert max_dim == 2
@@ -78,6 +80,9 @@ class TUDataset(InMemoryComplexDataset):
         """This is overwritten, so the cellular complex data is placed in another folder"""
         directory = super(TUDataset, self).processed_dir
         suffix = f"_{self._max_ring_size}rings" if self._cellular else ""
+        if self._random_cell_count is not None:
+            suffix = f"_{self._random_cell_count}x{self._max_ring_size}random"
+        print(suffix, self._random_cell_count)
         suffix += f"_down_adj" if self.include_down_adj else ""
         return directory + suffix
             
@@ -105,11 +110,18 @@ class TUDataset(InMemoryComplexDataset):
             graph_list = pickle.load(handle)        
         
         if self._cellular:
-            print("Converting the dataset accounting for rings...")
-            complexes, _, _ = convert_graph_dataset_with_rings(graph_list, max_ring_size=self._max_ring_size,
-                                                               include_down_adj=self.include_down_adj,
-                                                               init_method=self._init_method,
-                                                               init_edges=True, init_rings=True)
+            if self._random_cell_count == None:
+                print("Converting the dataset accounting for rings...")
+                complexes, _, _ = convert_graph_dataset_with_rings(graph_list, max_ring_size=self._max_ring_size,
+                                                                include_down_adj=self.include_down_adj,
+                                                                init_method=self._init_method,
+                                                                init_edges=True, init_rings=True)
+            else:
+                print("Converting the dataset with random cells...")
+                complexes, _, _ = convert_graph_dataset_with_random_cells(graph_list, random_cell_count=self._random_cell_count, max_ring_size=self._max_ring_size,
+                                                                include_down_adj=self.include_down_adj,
+                                                                init_method=self._init_method,
+                                                                init_edges=True, init_rings=True)
         else:
             print("Converting the dataset with gudhi...")
             # TODO: eventually remove the following comment

@@ -15,6 +15,7 @@ from torch_scatter import scatter
 from data.parallel import ProgressParallel
 from joblib import delayed
 
+from .datasets.random_ccs.sampling import cellular_er_approx_estimate
 
 def pyg_to_simplex_tree(edge_index: Tensor, size: int):
     """Constructs a simplex tree from a PyG graph.
@@ -351,6 +352,44 @@ def build_tables_with_rings(edge_index, simplex_tree, size, max_k):
 
     return cell_tables, id_maps
 
+def build_tables_with_random_cells(edge_index, simplex_tree, size, rand_cell_count):
+    
+    # Build simplex tables and id_maps up to edges by conveniently
+    # invoking the code for simplicial complexes
+    cell_tables, id_maps = build_tables(simplex_tree, size)
+
+    if isinstance(edge_index, torch.Tensor):
+        edge_index = edge_index.numpy()
+
+    edge_list = edge_index.T
+    G = nx.from_edgelist(edge_list)
+
+    n = len(G)
+    m = len(G.edges)
+    p = m * 2 / (n*n - n)
+
+    relabel = dict(zip(list(G.nodes), range(n)))
+    inverse_relabel = {v: u for u,v in relabel.items()}
+
+    G_relabeled = nx.relabel.relabel_nodes(G, relabel)
+    
+    # Find rings in the graph
+    rings = cellular_er_approx_estimate(n, p, rand_cell_count, samples=max(10,int(rand_cell_count + 1)), seed=42, G=G_relabeled)[1]
+
+    rings = [tuple(inverse_relabel[u] for u in cycle) for cycle in rings]
+    
+    if len(rings) > 0:
+        # Extend the tables with rings as 2-cells
+        id_maps += [{}]
+        cell_tables += [[]]
+        assert len(cell_tables) == 3, cell_tables
+        for cell in rings:
+            next_id = len(cell_tables[2])
+            id_maps[2][cell] = next_id
+            cell_tables[2].append(list(cell))
+
+    return cell_tables, id_maps
+
 
 def get_ring_boundaries(ring):
     boundaries = list()
@@ -496,6 +535,158 @@ def compute_ring_2complex(x: Union[Tensor, np.ndarray], edge_index: Union[Tensor
         cochains.append(cochain)
 
     return Complex(*cochains, y=complex_y, dimension=complex_dim)
+
+def compute_random_2complex(x: Union[Tensor, np.ndarray], edge_index: Union[Tensor, np.ndarray],
+                          edge_attr: Optional[Union[Tensor, np.ndarray]],
+                          size: int, y: Optional[Union[Tensor, np.ndarray]] = None, random_cell_count: float = 1.0,
+                          max_ring_size = 3,
+                          include_down_adj=True, init_method: str = 'sum',
+                          init_edges=True, init_rings=False) -> Complex:
+    """Generates a ring 2-complex of a pyG graph via graph-tool.
+
+    Args:
+        x: The feature matrix for the nodes of the graph (shape [num_vertices, num_v_feats])
+        edge_index: The edge_index of the graph (a tensor of shape [2, num_edges])
+        edge_attr: The feature matrix for the edges of the graph (shape [num_edges, num_e_feats])
+        size: The number of nodes in the graph
+        y: Labels for the graph nodes or a label for the whole graph.
+        max_k: maximum length of rings to look for.
+        include_down_adj: Whether to add down adj in the complex or not
+        init_method: How to initialise features at higher levels.
+    """
+    assert x is not None
+    assert isinstance(edge_index, np.ndarray) or isinstance(edge_index, Tensor)
+
+    # For parallel processing with joblib we need to pass numpy arrays as inputs
+    # Therefore, we convert here everything back to a tensor.
+    if isinstance(x, np.ndarray):
+        x = torch.tensor(x)
+    if isinstance(edge_index, np.ndarray):
+        edge_index = torch.tensor(edge_index)
+    if isinstance(edge_attr, np.ndarray):
+        edge_attr = torch.tensor(edge_attr)
+    if isinstance(y, np.ndarray):
+        y = torch.tensor(y)
+
+    # Creates the gudhi-based simplicial complex up to edges
+    simplex_tree = pyg_to_simplex_tree(edge_index, size)
+    assert simplex_tree.dimension() <= 1
+    if simplex_tree.dimension() == 0:
+        assert edge_index.size(1) == 0
+
+    # check how many rings it would have to calculate target cell count
+    rings = get_rings(edge_index, max_k=max_ring_size)
+    target_cell_count = random_cell_count * len(rings)
+
+    # Builds tables of the cellular complexes at each level and their IDs
+    cell_tables, id_maps = build_tables_with_random_cells(edge_index, simplex_tree, size, target_cell_count)
+    assert len(id_maps) <= 3
+    complex_dim = len(id_maps)-1
+
+    # Extracts the boundaries and coboundaries of each cell in the complex
+    boundaries_tables, boundaries, co_boundaries = extract_boundaries_and_coboundaries_with_rings(simplex_tree, id_maps)
+
+    # Computes the adjacencies between all the cells in the complex;
+    # here we force complex dimension to be 2
+    shared_boundaries, shared_coboundaries, lower_idx, upper_idx = build_adj(boundaries, co_boundaries, id_maps,
+                                                                   complex_dim, include_down_adj)
+    
+    # Construct features for the higher dimensions
+    xs = [x, None, None]
+    constructed_features = construct_features(x, cell_tables, init_method)
+    if simplex_tree.dimension() == 0:
+        assert len(constructed_features) == 1
+    if init_rings and len(constructed_features) > 2:
+        xs[2] = constructed_features[2]
+    
+    if init_edges and simplex_tree.dimension() >= 1:
+        if edge_attr is None:
+            xs[1] = constructed_features[1]
+        # If we have edge-features we simply use them for 1-cells
+        else:
+            # If edge_attr is a list of scalar features, make it a matrix
+            if edge_attr.dim() == 1:
+                edge_attr = edge_attr.view(-1, 1)
+            # Retrieve feats and check edge features are undirected
+            ex = dict()
+            for e, edge in enumerate(edge_index.numpy().T):
+                canon_edge = tuple(sorted(edge))
+                edge_id = id_maps[1][canon_edge]
+                edge_feats = edge_attr[e]
+                if edge_id in ex:
+                    assert torch.equal(ex[edge_id], edge_feats)
+                else:
+                    ex[edge_id] = edge_feats
+
+            # Build edge feature matrix
+            max_id = max(ex.keys())
+            edge_feats = []
+            assert len(cell_tables[1]) == max_id + 1
+            for id in range(max_id + 1):
+                edge_feats.append(ex[id])
+            xs[1] = torch.stack(edge_feats, dim=0)
+            assert xs[1].dim() == 2
+            assert xs[1].size(0) == len(id_maps[1])
+            assert xs[1].size(1) == edge_attr.size(1)
+
+    # Initialise the node / complex labels
+    v_y, complex_y = extract_labels(y, size)
+
+    cochains = []
+    for i in range(complex_dim + 1):
+        y = v_y if i == 0 else None
+        cochain = generate_cochain(i, xs[i], upper_idx, lower_idx, shared_boundaries, shared_coboundaries,
+                               cell_tables, boundaries_tables, complex_dim=complex_dim, y=y)
+        cochains.append(cochain)
+
+    return Complex(*cochains, y=complex_y, dimension=complex_dim)
+
+def convert_graph_dataset_with_random_cells(dataset, random_cell_count=1.0, max_ring_size=3, include_down_adj=False,
+                                     init_method: str = 'sum', init_edges=True, init_rings=False,
+                                     n_jobs=1):
+    dimension = -1
+    num_features = [None, None, None]
+
+    def maybe_convert_to_numpy(x):
+        if isinstance(x, Tensor):
+            return x.numpy()
+        return x
+
+    # Process the dataset in parallel
+    parallel = ProgressParallel(n_jobs=n_jobs, use_tqdm=True, total=len(dataset))
+    # It is important we supply a numpy array here. tensors seem to slow joblib down significantly.
+    complexes = parallel(delayed(compute_random_2complex)(
+        maybe_convert_to_numpy(data.x), maybe_convert_to_numpy(data.edge_index),
+        maybe_convert_to_numpy(data.edge_attr),
+        data.num_nodes, y=maybe_convert_to_numpy(data.y), random_cell_count=random_cell_count,
+        max_ring_size=max_ring_size,
+        include_down_adj=include_down_adj, init_method=init_method,
+        init_edges=init_edges, init_rings=init_rings) for data in dataset)
+
+    # NB: here we perform additional checks to verify the order of complexes
+    # corresponds to that of input graphs after _parallel_ conversion
+    for c, complex in enumerate(complexes):
+
+        # Handle dimension and number of features
+        if complex.dimension > dimension:
+            dimension = complex.dimension
+        for dim in range(complex.dimension + 1):
+            if num_features[dim] is None:
+                num_features[dim] = complex.cochains[dim].num_features
+            else:
+                assert num_features[dim] == complex.cochains[dim].num_features
+
+        # Validate against graph
+        graph = dataset[c]
+        if complex.y is None:
+            assert graph.y is None
+        else:
+            assert torch.equal(complex.y, graph.y)
+        assert torch.equal(complex.cochains[0].x, graph.x)
+        if complex.dimension >= 1:
+            assert complex.cochains[1].x.size(0) == (graph.edge_index.size(1) // 2)
+
+    return complexes, dimension, num_features[:dimension+1]
 
 
 def convert_graph_dataset_with_rings(dataset, max_ring_size=7, include_down_adj=False,

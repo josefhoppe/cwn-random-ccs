@@ -52,6 +52,12 @@ sh pyG_install.sh cu102
 pip install -r requirements.txt
 ```
 
+Compile Random CC Cython code:
+
+```shell
+cythonize -i -a data/datasets/random_ccs/*.pyx
+```
+
 ### Testing
 
 We suggest running all tests in the repository to verify everything is in place. Run:

@@ -76,6 +76,8 @@ def get_parser():
                         help='maximum cellular dimension (default: 2, i.e. two_cells)')
     parser.add_argument('--max_ring_size', type=int, default=None,
                         help='maximum ring size to look for (default: None, i.e. do not look for rings)')
+    parser.add_argument('--random_cell_count', type=float, default=None,
+                        help='number of random 2-cells to add (default: -1, i.e. do not add random 2-cells)')
     parser.add_argument('--result_folder', type=str, default=os.path.join(ROOT_DIR, 'exp', 'results'),
                         help='filename to output result (default: None, will use `scn/exp/results`)')
     parser.add_argument('--exp_name', type=str, default=str(time.time()),
