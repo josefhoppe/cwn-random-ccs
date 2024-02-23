@@ -1,13 +1,17 @@
-# CW Networks
+# CW Networks with random 2-cell lifting
 
-[![example workflow](https://github.com/twitter-research/cwn/actions/workflows/python-package.yml/badge.svg)](https://github.com/twitter-research/cwn/actions) 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/twitter-research/cwn/blob/main/LICENSE)
 
-
-
-This repository contains the official code used for the papers
+The code in this repository was originally developed for the following papers:
 **[Weisfeiler and Lehman Go Cellular: CW Networks](https://arxiv.org/abs/2106.12575) (NeurIPS 2021)**
 and **[Weisfeiler and Lehman Go Topological: Message Passing Simplicial Networks](https://arxiv.org/abs/2103.03212) (ICML 2021)**
+
+It was adapted to showcase the usage of random 2-cells for ablation analysis, resulting in the 'random' lifting procedure.
+To ensure a fair comparison, the target number of 2-cells to add $\nu$ is set to the number of rings added by the original lifting procedure multiplied with the newly-added parameter `--random_cell_count`.
+
+The experiments used in the paper are controlled by the corresponding scripts `cwn-rnd-nci109.sh` and `cwn-rnd-proteins.sh`, respectively.
+
+The remainder of this README is the original, with only minor modifications to compile the cython code for random CCs.
 
 <p align="center">
 <img src="./figures/glue_disks.jpeg"> &nbsp;&nbsp;&nbsp;&nbsp; <img src="./figures/sphere.jpeg">  <img src="./figures/empty_tetrahderon.jpeg">
