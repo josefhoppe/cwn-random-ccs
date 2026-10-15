@@ -365,16 +365,26 @@ def build_tables_with_random_cells(edge_index, simplex_tree, size, rand_cell_cou
     G = nx.from_edgelist(edge_list)
 
     n = len(G)
-    m = len(G.edges)
-    p = m * 2 / (n*n - n)
 
     relabel = dict(zip(list(G.nodes), range(n)))
     inverse_relabel = {v: u for u,v in relabel.items()}
 
     G_relabeled = nx.relabel.relabel_nodes(G, relabel)
+
+    ccs = list(nx.connected_components(G_relabeled))
+    if len(ccs) > 1:
+        # multiple CCs, connect with one edge
+        base_node = min(ccs[0])
+        for cc in ccs[1:]:
+            G_relabeled.add_edge(base_node, min(cc))
+
+    # sometimes isolated vertices are lost and n < size
+    N = np.zeros(n + 1, dtype=np.int64)
+    for i in range(n+1):
+        N[i] = rand_cell_count[i]
     
     # Find rings in the graph
-    _, rings, _, _ = uniform_cc(G_relabeled, N=rand_cell_count, exact_N=True, approx_prob=False, samples=np.sum(rand_cell_count) * 2, seed=42)
+    _, rings, _, _ = uniform_cc(G_relabeled, N=N, exact_N=True, approx_prob=False, samples=np.sum(rand_cell_count) * 2, seed=42)
 
     rings = [tuple(inverse_relabel[u] for u in cycle) for cycle in rings]
     
