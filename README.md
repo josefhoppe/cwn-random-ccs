@@ -11,7 +11,7 @@ To ensure a fair comparison, the target number of 2-cells to add $\nu$ is set to
 
 The experiments used in the paper are controlled by the corresponding scripts `cwn-rnd-nci109.sh` and `cwn-rnd-proteins.sh`, respectively.
 
-The remainder of this README is the original, with only minor modifications to compile the cython code for random CCs.
+The remainder of this README is the original, with modifications to the installation instructions (updated dependency versions and [py-raccoon](https://github.com/josefhoppe/py-raccoon) for random CCs).
 
 <p align="center">
 <img src="./figures/glue_disks.jpeg"> &nbsp;&nbsp;&nbsp;&nbsp; <img src="./figures/sphere.jpeg">  <img src="./figures/empty_tetrahderon.jpeg">
@@ -38,29 +38,35 @@ We demonstrate that our model achieves state-of-the-art results on a variety of 
 
 <img align="right" height="400" src="./figures/cwn.png">
 
-We use `Python 3.8` and `PyTorch 1.7.0` on `CUDA 10.2` for this project.
+We use `Python 3.10` and `PyTorch 1.13.1` on CPU for this project.
+(The original CWN code used `Python 3.8` and `PyTorch 1.7.0` on `CUDA 10.2`;
+the versions were raised because `py-raccoon[exact]` requires Python 3.10 or newer.)
 Please open a terminal window and follow these steps to prepare the virtual environment needed to run any experiment.
 
 Create the environment:
 ```shell
-conda create --name cwn python=3.8
+conda create -y --name cwn -c conda-forge --override-channels python=3.10 pip
 conda activate cwn
-conda install pip # Make sure the environment pip is used
 ```
 
 Install dependencies:
 ```shell
 sh graph-tool_install.sh
-conda install -y pytorch=1.7.0 torchvision cudatoolkit=10.2 -c pytorch
-sh pyG_install.sh cu102
+sh pyG_install.sh cpu
 pip install -r requirements.txt
+pip install --no-deps "py-raccoon[exact]==1.2.0"
+conda deactivate && conda activate cwn  # applies the LD_PRELOAD set by graph-tool_install.sh
 ```
 
-Compile Random CC Cython code:
-
-```shell
-cythonize -i -a data/datasets/random_ccs/*.pyx
-```
+Notes:
+- py-raccoon is built from source, so a C/C++ compiler is required.
+- `--no-deps` is needed because scikit-sparse 0.5.0 declares `numpy>2.0` on PyPI, which would make pip upgrade numpy.
+  The conda-forge build of scikit-sparse works with numpy 1.23.5, so the corresponding warning of `pip check` can be ignored.
+- `graph-tool_install.sh` sets `LD_PRELOAD` for the environment, since the libgomp bundled with the PyTorch wheel
+  otherwise breaks graph-tool when `torch` is imported first.
+- `pyG_install.sh` restores the aliases `container_abcs` and `int_classes` in the installed `torch/_six.py`,
+  which `torch-geometric 1.6.3` and `data/data_loading.py` still import but PyTorch removed in version 1.9.
+- For GPU support, run `sh pyG_install.sh cu117` instead (untested).
 
 ### Testing
 

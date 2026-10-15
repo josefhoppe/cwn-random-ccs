@@ -15,7 +15,7 @@ from torch_scatter import scatter
 from data.parallel import ProgressParallel
 from joblib import delayed
 
-from .datasets.random_ccs.sampling import cellular_er_approx_estimate
+from py_raccoon import uniform_cc
 
 def pyg_to_simplex_tree(edge_index: Tensor, size: int):
     """Constructs a simplex tree from a PyG graph.
@@ -374,7 +374,7 @@ def build_tables_with_random_cells(edge_index, simplex_tree, size, rand_cell_cou
     G_relabeled = nx.relabel.relabel_nodes(G, relabel)
     
     # Find rings in the graph
-    rings = cellular_er_approx_estimate(n, p, rand_cell_count, samples=max(10,int(rand_cell_count + 1)), seed=42, G=G_relabeled)[1]
+    _, rings, _, _ = uniform_cc(G_relabeled, N=rand_cell_count, exact_N=True, approx_prob=False, samples=np.sum(rand_cell_count) * 2, seed=42)
 
     rings = [tuple(inverse_relabel[u] for u in cycle) for cycle in rings]
     
@@ -576,10 +576,14 @@ def compute_random_2complex(x: Union[Tensor, np.ndarray], edge_index: Union[Tens
 
     # check how many rings it would have to calculate target cell count
     rings = get_rings(edge_index, max_k=max_ring_size)
-    target_cell_count = random_cell_count * len(rings)
+    ring_counts = np.zeros(size + 1, dtype=np.int64)
+    for r in rings:
+        ring_counts[len(r)] += 1
+    for i, _ in enumerate(ring_counts):
+        ring_counts[i] *= random_cell_count
 
     # Builds tables of the cellular complexes at each level and their IDs
-    cell_tables, id_maps = build_tables_with_random_cells(edge_index, simplex_tree, size, target_cell_count)
+    cell_tables, id_maps = build_tables_with_random_cells(edge_index, simplex_tree, size, ring_counts)
     assert len(id_maps) <= 3
     complex_dim = len(id_maps)-1
 

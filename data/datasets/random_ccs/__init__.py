@@ -1,3 +1,0 @@
-"""
-Random Cell Complexes module
-"""
